@@ -1,0 +1,379 @@
+h2. Migrations
+
+Migrations are a convenient way for you to alter your database in a structured and organized manner. You could edit fragments of SQL by hand but you would then be responsible for telling other developers that they need to go and run it. You'd also have to keep track of which changes need to be run against the production machines next time you deploy.
+
+Active Record tracks which migrations have already been run so all you have to do is update your source and run +./mrails db:migrate+. Active Record will work out which migrations should be run. It will also update your +db/ENVIRONMENT_structure.sql+ file to match the structure of your database.
+
+Migrations also allow you to describe these transformations using PHP. The great thing about this is that (like most of Active Record's functionality) it is database independent: you don't need to worry about the precise syntax of +CREATE TABLE+ any more than you worry about variations on +SELECT *+ (you can drop down to raw SQL for database specific features). For example you could use SQLite3 in development, but MySQL in production.
+
+You'll learn all about migrations including:
+
+* The generators you can use to create them
+* The methods Active Record provides to manipulate your database
+* The Mrails tasks that manipulate them
+* How they relate to +ENVIRONMENT_structure.sql+
+
+endprologue.
+
+
+
+
+h3. Anatomy of a Migration
+
+Before we dive into the details of a migration, here are a few examples of the sorts of things you can do:
+
+<php>
+class CreateProducts extends AkActiveRecordMigration {
+  public function up() {
+    $this->createTable('products', 'name,description');
+  }
+  public function down() {
+    $this->dropTable('products');
+  }
+}
+</php>
+
+This migration adds a table called +products+ with a string column called +name+ and a text column called +description+. A primary key column called +id+ will also be added, however since this is the default we do not need to ask for this. The timestamp columns +created_at+ and +updated_at+ which Active Record populates automatically will also be added. Reversing this migration is as simple as dropping the table.
+
+Migrations are not limited to changing the schema. You can also use them to fix bad data in the database or populate new fields:
+
+<php>
+class AddReceiveNewsletterToUsers extends AkActiveRecordMigration {
+  public function up() {
+    $this->changeTable('users', 'receive_newsletter(bool) default false');
+    Ak::get('User')->updateAll("receive_newsletter = ?", true);
+  }
+  public function down() {
+    $this->removeColumn('users', 'receive_newsletter');
+  }
+}
+</php>
+
+This migration adds a +receive_newsletter+ column to the +users+ table. We want it to default to +false+ for new users, but existing users are considered
+to have already opted in, so we use the User model to set the flag to +true+ for existing users.
+
+NOTE: Some "caveats":#using-models-in-your-migrations apply to using models in your migrations.
+
+h4. Migrations are Classes
+
+A migration is a subclass of <tt>AkActiveRecordMigration</tt> that implements two class methods: +up+ (perform the required transformations) and +down+ (revert them).
+
+Active Record provides methods that perform common data definition tasks in a database independent way (you'll read about them in detail later):
+
+* +createTable+
+* +changeTable+
+* +dropTable+
+* +addColumn+
+* +changeColumn+
+* +renameColumn+
+* +removeColumn+
+* +addIndex+
+* +removeIndex+
+
+If you need to perform tasks specific to your database (for example create a "foreign key":#active-record-and-referential-integrity constraint) then the +execute+ function allows you to execute arbitrary SQL. A migration is just a regular PHP class so you're not limited to these functions. For example after adding a column you could write code to set the value of that column for existing records (if necessary using your models).
+
+On databases that support transactions with statements that change the schema (such as PostgreSQL or SQLite3), migrations are wrapped in a transaction. If the database does not support this (for example MySQL) then when a migration fails the parts of it that succeeded will not be rolled back. You will have to unpick the changes that were made by hand.
+
+h4. What's in a Name
+
+Migrations are stored in files in +db/migrate+, one for each migration class. The name of the file is of the form +YYYYMMDDHHMMSS_create_products.php+, that is to say a UTC timestamp identifying the migration followed by an underscore followed by the name of the migration. The migration class' name must match (the camelcased version of) the latter part of the file name. For example +20080906120000_create_products.php+ should define +CreateProducts+ and +20080906120001_add_details_to_products.php+ should define +AddDetailsToProducts+. If you do feel the need to change the file name then you <em>have to</em> update the name of the class inside or Rails will complain about a missing class.
+
+Internally Rails only uses the migration's number (the timestamp) to identify them. Prior to Rails 2.0 the migration number started at 1 and was incremented each time a migration was generated. With multiple developers it was easy for these to clash requiring you to rollback migrations and renumber them. With Rails 2.0 this is largely avoided by using the creation time of the migration to identify them.
+
+The combination of timestamps and recording which migrations have been run allows Rails to handle common situations that occur with multiple developers.
+
+For example Alice adds migrations +20080906120000+ and +20080906123000+ and Bob adds +20080906124500+ and runs it. Alice finishes her changes and checks in her migrations and Bob pulls down the latest changes. Rails knows that it has not run Alice's two migrations so +./mrails db:migrate+ would run them (even though Bob's migration with a later timestamp has been run), and similarly migrating down would not run their +down+ methods.
+
+Of course this is no substitution for communication within the team. For example, if Alice's migration removed a table that Bob's migration assumed to exist, then trouble would certainly strike.
+
+h4. Changing Migrations
+
+Occasionally you will make a mistake when writing a migration. If you have already run the migration then you cannot just edit the migration and run the migration again: Rails thinks it has already run the migration and so will do nothing when you run +./mrails db:migrate+. You must rollback the migration (for example with +./mrails db:rollback+), edit your migration and then run +./mrails db:migrate+ to run the corrected version.
+
+In general editing existing migrations is not a good idea: you will be creating extra work for yourself and your co-workers and cause major headaches if the existing version of the migration has already been run on production machines. Instead you should write a new migration that performs the changes you require. Editing a freshly generated migration that has not yet been committed to source control (or more generally which has not been propagated beyond your development machine) is relatively harmless. Just use some common sense.
+
+h3. Creating a Migration
+
+h4. Creating a Model
+
+The model and scaffold generators will create migrations appropriate for adding a new model. This migration will already contain instructions for creating the relevant table. If you tell Rails what columns you want then statements for adding those will also be created. For example, running
+
+<shell>
+./mrails generate model Product name,description
+</shell>
+
+will create a migration that looks like this
+
+<php>
+class CreateProducts extends AkActiveRecordMigration {
+  public function up() {
+    $this->createTable('products', 'name,description', 
+    array('timestamps' => true));
+  }
+  public function down() {
+    $this->dropTable('products');
+  }
+}
+</php>
+
+You can append as many column name/type pairs as you want. By default +timestamps+ (which creates the +updated_at+ and +created_at+ columns that
+are automatically populated by Active Record) will be added for you.
+
+h4. Creating a Standalone Migration
+
+If you are creating migrations for other purposes (for example to add a column to an existing table) then you can use the migration generator:
+
+<shell>
+./mrails generate migration AddPartNumberToProducts
+</shell>
+
+This will create an empty but appropriately named migration:
+
+<php>
+class AddPartNumberToProducts extends AkActiveRecordMigration{
+  public function up() {
+  }
+  public function down() {
+  }
+}
+</php>
+
+If the migration name is of the form "AddXXXToYYY" or "RemoveXXXFromYYY" and is followed by a list of column names and types then a migration containing the appropriate +addColumn+ and +removeColumn+ statements will be created.
+
+<shell>
+./mrails generate migration AddPartNumberToProducts part_number
+</shell>
+
+will generate
+
+<php>
+class AddPartNumberToProducts extends AkActiveRecordMigration {
+  public function up() {
+    $this->addColumn('products', 'part_number');
+  }
+  public function down() {
+    $this->removeColumn('products', 'part_number');
+  }
+}
+</php>
+
+Similarly,
+
+<shell>
+./mrails generate migration RemovePartNumberFromProducts part_number
+</shell>
+
+generates
+
+<php>
+class RemovePartNumberFromProducts extends AkActiveRecordMigration {
+  public function up() {
+    $this->removeColumn('products', 'part_number');
+  }
+  public function down() {
+    $this->addColumn('products', 'part_number');
+  }
+}
+</php>
+
+You are not limited to one magically generated column, for example
+
+<shell>
+./mrails generate migration AddDetailsToProducts part_number price:decimal
+</shell>
+
+generates
+
+<php>
+class AddDetailsToProducts extends AkActiveRecordMigration {
+  public function up() {
+    $this->addColumn('products', 'part_number');
+    $this->addColumn('products', 'price(decimal)');
+  }
+  public function down() {
+    $this->removeColumn('products', 'price');
+    $this->removeColumn('products', 'part_number');
+  }
+}
+</php>
+
+As always, what has been generated for you is just a starting point. You can add or remove from it as you see fit.
+
+h3. Writing a Migration
+
+Once you have created your migration using one of the generators it's time to get to work!
+
+h4. Creating a Table
+
+Migration method +createTable+ will be one of your workhorses. A typical use would be
+
+<php>
+$this->createTable('products', 'name');
+</php>
+
+which creates a +products+ table with a column called +name+ (and as discussed below, an implicit +id+ column).
+
+By default +createTable+ will create a primary key called +id+. You can change the name of the primary key with the +'primary_key'+ option (don't forget to update the corresponding model) or if you don't want a primary key at all (for example for a HABTM join table) you can pass +'id' => false+. If you need to pass database specific options you can place an SQL fragment in the +'options'+ option. For example
+
+<php>
+$this->createTable('products', 'name(string) notnull', 
+        array('options' => "ENGINE=BLACKHOLE"));
+</php>
+
+will append +ENGINE=BLACKHOLE+ to the SQL statement used to create the table (when using MySQL the default is +ENGINE=InnoDB+).
+
+The types supported by Active Record are +'primary_key'+, +'string'+, +'text'+, +'integer'+, +'float'+, +'decimal'+, +'datetime'+, +'timestamp'+, +'time'+, +'date'+, +'binary'+, +'boolean'+.
+
+These will be mapped onto an appropriate underlying database type, for example with MySQL +'string'+ is mapped to +VARCHAR(255)+. You can create columns of types not supported by Active Record, for example
+
+<php>
+$this->createTable('products', 'name(polygon) notnull');
+</php>
+
+This may however hinder portability to other databases.
+
+h4. Changing Tables
+
+A close cousin of +createTable+ is +changeTable+, used for changing existing tables. It is used in a similar fashion to +createTable+. For example
+
+<php>
+$this->changeTable('products', 
+  array(
+    'remove' => 'description,name',
+    'add'    => 'part_number(string) index',
+    'rename' => array('upccode'=>'upc_code')
+  ));
+</php>
+
+removes the +description+ and +name+ columns, creates a +part_number+ column and adds an index on it. Finally it renames the +upccode+ column.   This is the same as doing
+
+<php>
+$this->removeColumn ('products', 'description');
+$this->removeColumn ('products', 'name');
+$this->addColumn    ('products', 'part_number(string)');
+$this->addIndex     ('products', 'part_number');
+$this->renameColumn ('products', 'upccode', 'upc_code');
+</php>
+
+You don't have to keep repeating the table name and it groups all the statements related to modifying one particular table. The individual transformation names are also shorter, for example +removeColumn+ becomes just +remove+ and +addIndex+ becomes just +index+ or can be included as an alias of +add+.
+
+
+h4. Writing Your +down+ Method
+
+The +down+ method of your migration should revert the transformations done by the +up+ method. In other words the database schema should be unchanged if you do an +up+ followed by a +down+. For example if you create a table in the +up+ method you should drop it in the +down+ method. It is wise to do things in precisely the reverse order to in the +up+ method. For example
+
+<php>
+class ExampleMigration extends AkActiveRecordMigration {
+
+  public function up() {
+    $this->createTable('products', 'category_id');
+    
+    // add a foreign key
+    $this->execute('SQL
+      ALTER TABLE products
+        ADD CONSTRAINT fk_products_categories
+        FOREIGN KEY (category_id)
+        REFERENCES categories(id)
+    ');
+
+    $this->addColumn('users', 'home_page_url');
+
+    $this->renameColumn('users', 'email', 'email_address');
+  }
+
+  public function down() {
+    $this->renameColumn('users', 'email_address', 'email');
+    $this->removeColumn('users', 'home_page_url');
+    $this->execute("ALTER TABLE products DROP FOREIGN KEY fk_products_categories");
+    $this->dropTable('products');
+  }
+}
+</php>
+Sometimes your migration will do something which is just plain irreversible, for example it might destroy some data. In cases like those when you can't reverse the migration you can raise +IrreversibleMigration+ from your +down+ method. If someone tries to revert your migration an error message will be
+displayed saying that it can't be done.
+
+
+h3. Running Migrations
+
+Rails provides a set of mrails tasks to work with migrations which boils down to running certain sets of migrations. The very first migration related mrails task you use will probably be +db:migrate+. In its most basic form it just runs the +up+ method for all the migrations that have not yet been run. If there are no such migrations it exits.
+
+Note that running the +db:migrate+ also invokes the +db:schema:dump+ task, which will update your db/ENVIRONMENT_structure.sql file to match the structure of your database.
+
+If you specify a target version, Active Record will run the required migrations (up or down) until it has reached the specified version. The
+version is the numerical prefix on the migration's filename. For example to migrate to version 20080906120000 run
+
+<shell>
+./mrails db:migrate VERSION=20080906120000
+</shell>
+
+If this is greater than the current version (i.e. it is migrating upwards) this will run the +up+ method on all migrations up to and including 20080906120000, if migrating downwards this will run the +down+ method on all the migrations down to, but not including, 20080906120000.
+
+h4. Rolling Back
+
+A common task is to rollback the last migration, for example if you made a mistake in it and wish to correct it. Rather than tracking down the version number associated with the previous migration you can run
+
+<shell>
+./mrails db:rollback
+</shell>
+
+This will run the +down+ method from the latest migration. If you need to undo several migrations you can provide a +STEP+ parameter:
+
+<shell>
+./mrails db:rollback STEP=3
+</shell>
+
+will run the +down+ method from the last 3 migrations.
+
+The +db:migrate:redo+ task is a shortcut for doing a rollback and then migrating back up again. As with the +db:rollback+ task you can use the +STEP+ parameter if you need to go more than one version back, for example
+
+<shell>
+./mrails db:migrate:redo STEP=3
+</shell>
+
+Neither of these Mrails tasks do anything you could not do with +db:migrate+, they are simply more convenient since you do not need to explicitly specify the version to migrate to.
+
+Lastly, the +db:reset+ task will drop the database, recreate it and load the current schema into it.
+
+NOTE: This is not the same as running all the migrations - see the section on "ENVIRONMENT_structure.sql":#schema-dumping-and-you.
+
+h4. Being Specific
+
+If you need to run a specific migration up or down the +db:migrate:up+ and +db:migrate:down+ tasks will do that. Just specify the appropriate version and the corresponding migration will have its +up+ or +down+ method invoked, for example
+
+<shell>
+./mrails db:migrate:up VERSION=20080906120000
+</shell>
+
+will run the +up+ method from the 20080906120000 migration. These tasks check whether the migration has already run, so for example +db:migrate:up VERSION=20080906120000+ will do nothing if Active Record believes that 20080906120000 has already been run.
+
+
+
+h3. Schema Dumping and You
+
+h4. What are Schema Files for?
+
+Migrations, mighty as they may be, are not the authoritative source for your database schema. That role falls to either +db/ENVIRONMENT_structure.sql+ or an SQL file which Active Record generates by examining the database. They are not designed to be edited, they just represent the current state of the database.
+
+There is no need (and it is error prone) to deploy a new instance of an app by replaying the entire migration history. It is much simpler and faster to just load into the database a description of the current schema.
+
+For example, this is how the test database is created: the current development database is dumped (either to +db/ENVIRONMENT_structure.sql+ or +db/development.sql+) and then loaded into the test database.
+
+Schema files are also useful if you want a quick look at what attributes an Active Record object has. This information is not in the model's code and is frequently spread across several migrations but is all summed up in the schema file.
+
+h4. Schema Dumps
+
+The database's structure will be dumped using a tool specific to that database (via the +db:structure:dump+ Mrails task) into +db/ENVIRONMENT_structure.sql+. For example for PostgreSQL the +pg_dump+ utility is used and for MySQL this file will contain the output of +SHOW CREATE TABLE+ for the various tables. Loading this schema is simply a question of executing the SQL statements contained inside.
+
+By definition this will be a perfect copy of the database's structure but this will usually prevent loading the schema into a database other than the one used to create it.
+
+h4. Schema Dumps and Source Control
+
+Because schema dumps are the authoritative source for your database schema, it is strongly recommended that you check them into source control.
+
+h3. Active Record and Referential Integrity
+
+The Active Record way claims that intelligence belongs in your models, not in the database. As such, features such as triggers or foreign key constraints, which push some of that intelligence back into the database, are not heavily used.
+
+Validations such as +validatesUniquenessOf+ are one way in which models can enforce data integrity. The +'dependent'+ option on associations allows models to automatically destroy child objects when the parent is destroyed. Like anything which operates at the application level these cannot guarantee referential integrity and so some people augment them with foreign key constraints.
+
+Although Active Record does not provide any tools for working directly with such features, the +execute+ method can be used to execute arbitrary SQL. 

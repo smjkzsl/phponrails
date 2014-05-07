@@ -1,0 +1,9 @@
+#!/usr/bin/env php
+
+WARNING ./script/generate is no longer supported
+
+Use:
+
+    ./mrails generate 
+
+<?php exit(0); ?>

@@ -1,0 +1,26 @@
+#!/usr/bin/env php
+#please set rails_utils\script\console.php
+#set: return 'D:\SaeServer\php\php.exe'; on line 14
+#set defined('BASE_DIR')  || define('BASE_DIR','D:\SaeServer\www'); on line 34
+<?php
+
+// Setup constants via the command line before loading the configuration
+foreach($argv as $arg){
+  if(preg_match('/^([^=]+)=([^ ]+)/', $arg, $matches)) define($matches[1], $matches[2]); 
+}
+
+define('CONSOLE_MODE', true);
+define('ENABLE_RAILS_ARGS', true);
+defined('DS')           || define('DS', DIRECTORY_SEPARATOR);
+defined('BASE_DIR')  || define('BASE_DIR', str_replace(DS.'script'.DS.'console','',__FILE__));
+
+$_app_config_file = BASE_DIR.DS.'config'.DS.'config.php';
+
+if(file_exists($_app_config_file)){
+    include(BASE_DIR.DS.'config'.DS.'config.php');
+}else{
+    include(BASE_DIR.DS.'test'.DS.'shared'.DS.'config'.DS.'config.php');
+}
+defined('ENVIRONMENT')           || define('ENVIRONMENT', 'testing');
+require_once(RAILS_UTILS_DIR.DS.'scripts'.DS.'console.php');
+

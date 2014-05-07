@@ -1,0 +1,7 @@
+#!/usr/bin/env php
+<?php
+
+defined('ENVIRONMENT') ? null : define('ENVIRONMENT', 'development');
+include(dirname(__FILE__).DIRECTORY_SEPARATOR.'..'.DIRECTORY_SEPARATOR.'config'.DIRECTORY_SEPARATOR.'config.php');
+require_once(RAILS_UTILS_DIR.DS.'scripts'.DS.'plugin.php');
+

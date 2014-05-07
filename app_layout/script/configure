@@ -1,0 +1,11 @@
+#!php
+<?php
+define('IN_SAE',false);
+define('AK_ENVIRONMENT',    'setup');
+define('DS',                DIRECTORY_SEPARATOR);
+define('BASE_DIR',       str_replace(DS.'script', '', dirname(__FILE__)));
+define('CONFIG_DIR',     BASE_DIR.DS.'config');
+
+include CONFIG_DIR.DS.'environment.php';
+include RAILS_UTILS_DIR.DS.'scripts'.DS.'configure.php';
+

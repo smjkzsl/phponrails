@@ -1,0 +1,22 @@
+appname: phponrails
+handle:
+#- errordoc: 404 /public/404.html
+#- errordoc: 500 /public/500.html
+#- errordoc: 422 /public/422.html
+- directoryindex: index.php
+- hostaccess:  if(path ~ "/config/.*") deny "all"
+- hostaccess:  if(path ~ "/vendor/.*") deny "all"
+- hostaccess:  if(path ~ "/log/.*") deny "all"
+- hostaccess:  if(path ~ "/tmp/.*") deny "all"
+- hostaccess:  if(path ~ "/script/.*") deny "all"
+- hostaccess:  if(path ~ "/lib/.*") deny "all"
+- hostaccess:  if(path ~ "/app/.*") deny "all"
+#~ - compress: if ( out_header["Content-type"] ~ "text/css" ) compress
+#~ - compress: if ( out_header["Content-type"] ~ "text/javascript" ) compress
+#~ - compress: if ( out_header["Content-type"] ~ "image/png" ) compress
+#~ - compress: if ( out_header["Content-type"] ~ "image/jpeg" ) compress
+#~ - compress: if ( out_header["Content-type"] ~ "image/pjpeg" ) compress
+#~ - compress: if ( out_header["Content-type"] ~ "image/gif" ) compress
+- rewrite:  if( !is_file() && path~"(/.*)" && query_string ~ "(.+)") goto "/index.php?ak=$1?%{QUERY_STRING}"
+
+- rewrite:  if( !is_file() && path~"(/.*)") goto "/index.php?ak=$1"

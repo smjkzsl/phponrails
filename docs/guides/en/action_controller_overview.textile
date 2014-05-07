@@ -1,0 +1,643 @@
+h2. Action Controller Overview
+
+In this guide you will learn how controllers work and how they fit into the request cycle in your application. After reading this guide, you will be able to:
+
+* Follow the flow of a request through a controller
+* Understand why and how to store data in the session or cookies
+* Work with filters to execute code during request processing
+* Use Action Controller's built-in HTTP authentication
+* Stream data directly to the user's browser
+* Filter sensitive parameters so they do not appear in the application's log
+* Deal with exceptions that may be raised during request processing
+
+endprologue.
+
+WARNING. This Guide is based on Rails 2.0. Some of the code shown here will not work in other versions of Rails.
+
+
+
+h3. What Does a Controller Do?
+
+Action Controller is the C in MVC. After routing has determined which controller to use for a request, your controller is responsible for making sense of the request and producing the appropriate output. Luckily, Action Controller does most of the groundwork for you and uses smart conventions to make this as straightforward as possible.
+
+For most conventional RESTful applications, the controller will receive the request (this is invisible to you as the developer), fetch or save data from a model and use a view to create HTML output. If your controller needs to do things a little differently, that's not a problem, this is just the most common way for a controller to work.
+
+A controller can thus be thought of as a middle man between models and views. It makes the model data available to the view so it can display that data to the user, and it saves or updates data from the user to the model.
+
+NOTE: For more details on the routing process, see 'Rails Routing from the Outside In':routing.html.
+
+h3. Methods and Actions
+
+A controller is a PHP class which inherits from +ApplicationController+ and has methods just like any other class. When your application receives a request, the routing will determine which controller and action to run, then Rails creates an instance of that controller and runs the method with the same name as the action.
+
+<php>
+class ClientsController extends ApplicationController {
+  public function add() {
+  }
+}
+</php>
+
+As an example, if a user goes to +/clients/add+ in your application to add a new client, Rails will create an instance of +ClientsController+ and run the +add+ method. Note that the empty method from the example above could work just fine because Rails will by default render the +add.html.tpl+ view unless the action says otherwise. The +add+ method could make available to the view a +client+ instance variable by creating a new +Client+:
+
+<php>
+public function add() {
+  $this->client = new Client();
+}
+</php>
+
+The 'Layouts & Rendering Guide':layouts_and_rendering.html explains this in more detail.
+
++ApplicationController+ inherits from +AkActionController+, which defines a number of helpful methods. This guide will cover some of these, but if you're curious to see what's in there, you can see all of them in the API documentation or in the source itself.
+
+Only public methods are callable as actions. It is a best practice to lower the visibility of methods which are not intended to be actions, like auxiliary methods or filters by prefixing the method names with an underscore.
+
+h3. Parameters
+
+You will probably want to access data sent in by the user or other parameters in your controller actions. There are two kinds of parameters possible in a web application. The first are parameters that are sent as part of the URL, called query string parameters. The query string is everything after '?' in the URL. The second type of parameter is usually referred to as POST data. This information usually comes from an HTML form which has been filled in by the user. It's called POST data because it can only be sent as part of an HTTP POST request. Rails does not make any distinction between query string parameters and POST parameters, and both are available in the +$this->params+ array in your controller:
+
+<php>
+class ClientsController extends AkActionController {
+  // This action uses query string parameters because it gets run
+  // by an HTTP GET request, but this does not make any difference
+  // to the way in which the parameters are accessed. The URL for
+  // this action would look like this in order to list activated
+  // clients: /clients?status=activated
+  public function index() {
+    if($this->params['status'] == 'activated'){
+      $this->clients = Client::getActivated();
+    }else{
+      $this->clients = Client::getunactivated();
+    }
+  }
+
+  // This action uses POST parameters. They are most likely coming
+  // from an HTML form which the user has submitted. The URL for
+  // this RESTful request will be '/clients', and the data will be
+  // sent as part of the request body.
+  public function create() {
+    $this->client = new Client($this->params['client']);
+    if($this->client->save()){
+      $this->redirectTo($this->client);
+    }else{
+      // This line overrides the default rendering behavior, which
+      // would have been to render the 'create' view.
+      $this->renderAction('add');
+    }
+  }
+}
+</php>
+
+h4. Array Parameters
+
+The +$this->params+ array is not limited to one-dimensional keys and values. It can contain arrays and (nested) arrays. To send an array of values, append an empty pair of square brackets '[]' to the key name:
+
+<pre>
+GET /clients?ids[]=1&ids[]=2&ids[]=3
+</pre>
+
+NOTE: The actual URL in this example will be encoded as '/clients?ids%5b%5d=1&ids%5b%5d=2&ids%5b%5b=3' as '[' and ']' are not allowed in URLs. Most of the time you don't have to worry about this because the browser will take care of it for you, and Rails will decode it back when it receives it, but if you ever find yourself having to send those requests to the server manually you have to keep this in mind.
+
+The value of +$this->params['ids']+ will now be +array('1', '2', '3')+. Note that parameter values are always strings; Rails makes no attempt to guess or cast the type.
+
+To send an array you include the key name inside the brackets:
+
+<html>
+<form action='/clients' method='post'>
+  <input type='text' name='client[name]' value='Acme' />
+  <input type='text' name='client[phone]' value='12345' />
+  <input type='text' name='client[address][postcode]' value='12345' />
+  <input type='text' name='client[address][city]' value='Carrot City' />
+</form>
+</html>
+
+When this form is submitted, the value of +$this->params['client']+ will be <tt>array('name' => 'Acme', 'phone' => '12345', 'address' => array('postcode' => '12345', 'city' => 'Carrot City'))</tt>. Note the nested array in +$this->params['client']['address']+.
+
+
+h4. Routing Parameters
+
+The +$this->params+ array will always contain the +'controller'+ and +'action'+ keys, but you should use the methods +getControllerName()+ and +actionName()+ instead to access these values. Any other parameters defined by the routing, such as +'id'+ will also be available. As an example, consider a listing of clients where the list can show either active or inactive clients. We can add a route which captures the +'status'+ parameter in a 'pretty' URL:
+
+<php>
+$Map->connect('/clients/:status', array(
+  'controller' => 'clients',
+  'action' => 'index',
+  'foo' => 'bar'));
+</php>
+
+In this case, when a user opens the URL +/clients/active+, +$this->params['status']+ will be set to 'active'. When this route is used, +$this->params['foo']+ will also be set to 'bar' just like it was passed in the query string. In the same way +$this->params['action']+ will contain 'index'.
+
+h4. Default URL options
+
+You can set global default parameters that will be used when generating URLs with +AkActionController::defaultUrlOptions()+. To do this, define a method with that name in your controller:
+
+<php>
+class ApplicationController extends AkActionController
+  // The options parameter is the array passed in to 'url_for'
+  public function defaultUrlOptions($options) {
+      return array('locale' => Ak::lang());
+  }
+}
+</php>
+
+These options will be used as a starting-point when generating URLs, so it's possible they'll be overridden by +urlFor+. Because this method is defined in the controller, you can define it on +ApplicationController+ so it would be used for all URL generation, or you could define it on only one controller for all URLs generated there.
+
+h3. Session
+
+Your application has a session for each user in which you can store small amounts of data that will be persisted between requests. The session can use one of a number of different storage mechanisms:
+
+* CookieStore - Stores everything on the client.
+* php.ini     - As defined on your php.ini setting.
+* MemCache    - Stores the data in a memcache.
+* Database    - Stores the data in a database using Active Record.
+
+All session stores use a cookie to store a unique ID for each session (you must use a cookie, Rails will not allow you to pass the session ID in the URL as this is less secure).
+
+For most stores this ID is used to look up the session data on the server, e.g. in a database table. There is one exception, and that is the default and recommended session store - the CookieStore - which stores all session data in the cookie itself (the ID is still available to you if you need it). This has the advantage of being very lightweight and it requires zero setup in a new application in order to use the session. The cookie data is cryptographically signed to make it tamper-proof, but it is not encrypted, so anyone with access to it can read its contents but not edit it (Rails will not accept it if it has been edited).
+
+The CookieStore can store around 4kB of data -- much less than the others -- but this is usually enough. Storing large amounts of data in the session is discouraged no matter which session store your application uses. You should especially avoid storing complex objects (anything other than basic PHP objects, the most common example being model instances) in the session, as the server might not be able to reassemble them between requests, which will result in an error.
+
+Read more about session storage in the 'Security Guide':security.html.
+
+If you need a different session storage mechanism, you can define it in your +config/config.php+ by defining +AK_SESSION_HANDLER+ to:
+
+* 1 - PHP based sessions
+* 2 - Database sessions
+* 3 - Memcached sessions
+* 4 - Cookie based sessions (default)
+
+IMPORTANT: Use the database for sessions instead of the cookie-based default, which shouldn't be used to store highly confidential information (create the session table with './mrails db:sessions:create').  You can also create the table from your migrations by running +AkDbSession::install();+
+
+Rails sets up a session key (the name of the cookie) and (for the CookieStore) a secret key used when signing the session data. These can also be changed in +config/environment.php+:
+
+<php>
+// Your secret key for verifying cookie session data integrity.
+// If you change this key, all old sessions will become invalid!
+// Make sure the secret is at least 30 characters and all random, 
+// no regular words or you'll be exposed to dictionary attacks.
+AkConfig::setOption('action_controller.session', array(
+  'key'     => '_yourappname_session', 
+  'secret'  => '4f50711b8f0f49572...'
+));
+</php>
+
+NOTE: Changing the secret when using the CookieStore will invalidate all existing sessions.
+
+h4. Accessing the Session
+
+In your controller you can access the session through the +$_SESSION+ superglobal.
+
+Session values are stored using key/value pairs like an array:
+
+<php>
+class ApplicationController extends AkActionController {
+
+  // Finds the User with the ID stored in the session with the key
+  // 'current_user_id' This is a common way to handle user login in
+  // an Rails application; logging in sets the session value and
+  // logging out removes it.
+  private function _loadCurrentUser() {
+    $this->CurrentUser = $this->User->findFirstBy('id', @$_SESSION['current_user_id']);
+  }
+}
+</php>
+
+To store something in the session, just assign it to the key like an array:
+
+<php>
+class LoginsController extends ApplicationController {
+  // 'Create' a login, aka 'log the user in'
+  public function create() {
+    if($this->User = User::authenticate(
+      $this->params['username'], $this->params['password'])) {
+      // Save the user ID in the session so it can be used in
+      // subsequent requests
+      $_SESSION['current_user_id'] = $this->User;
+      $this->redirectTo(root_url());
+    }
+  }
+}
+</php>
+
+To remove something from the session, unset that key with +unset($_SESSION['key'])+:
+
+<php>
+class LoginsController extends ApplicationController {
+  // 'Delete' a login, aka 'log the user out'
+  public function destroy() {
+    // Remove the user id from the session
+    unset($_SESSION['current_user_id']);
+    $this->redirectTo(root_url());
+  }
+}
+</php>
+
+To reset the entire session, +$_SESSION = null;+.
+
+h4. The Flash
+
+The flash is a special part of the session which is cleared with each request. This means that values stored there will only be available in the next request, which is useful for storing error messages etc. It is accessed in much the same way as the session, like an array. Let's use the act of logging out as an example. The controller can send a message which will be displayed to the user on the next request:
+
+<php>
+class LoginsController extends ApplicationController {
+  public function destroy() {
+    unset($_SESSION['current_user_id']);
+    $this->flash['notice'] = 'You have successfully logged out';
+    $this->redirectTo(root_url());
+  }
+}
+</php>
+
+The +destroy+ action redirects to the application's +root_url+, where the message will be displayed. Note that it's entirely up to the next action to decide what, if anything, it will do with what the previous action put in the flash. It's conventional to display eventual errors or notices from the flash in the application's layout:
+
+<php>
+<html>
+  <!-- <head/> -->
+  <body>
+    <%= flash %>
+    <!-- more content -->
+  </body>
+</html>
+</php>
+
+This way, if an action sets an error or a notice message, the layout will display it automatically.
+
+h5. +flash_now+
+
+By default, adding values to the flash will make them available to the next request, but sometimes you may want to access those values in the same request. For example, if the +create+ action fails to save a resource and you render the +add+ template directly, that's not going to result in a new request, but you may still want to display a message using the flash. To do this, you can use +flash_now+ in the same way you use the normal +flash+:
+
+<php>
+class ClientsController extends ApplicationController {
+  public function create() {
+    $this->client = new Client($this->params['client']);
+    if($this->client->save()){
+      // ...
+    }else{
+      $this->flash_now['error'] = 'Could not save client';
+      $this->renderAction('add');
+    }
+  }
+}
+</php>
+
+h3. Cookies
+
+Your application can store small amounts of data on the client -- called cookies -- that will be persisted across requests and even sessions. Rails provides easy access to cookies via PHP's superglobal +$_COOKIES_+, which -- much like the +$_SESSION+ -- works like an array:
+
+<php>
+class CommentsController extends ApplicationController {
+  public function add() {
+    // Auto-fill the commenter's name if it has been stored in a cookie
+    $this->comment = new Comment(array(
+                                  'name' => $_COOKIES['commenter_name']));
+  }
+
+  public function create() {
+    $this->comment = new Comment($this->params['comment']);
+    if($this->comment->save()){
+      $this->flash['notice'] = 'Thanks for your comment!';
+      if($this->params['remember_name']){
+        // Remember the commenter's name.
+        $_COOKIES['commenter_name'] = $this->comment['name'];
+      }else{
+        // Delete cookie for the commenter's name cookie, if any.
+        unset($_COOKIES['commenter_name']);
+      }
+      $this->redirectTo($this->comment->article);
+    } else {
+      $this->renderAction('add');
+    }
+  }
+}
+</php>
+
+h3. Filters
+
+Filters are methods that are run before, after or 'around' a controller action. 
+
+Filters are inherited, so if you set a filter on +ApplicationController+, it will be run on every controller in your application. 
+
+Before filters may halt the request cycle. A common before filter is one which requires that a user is logged in for an action to be run. You can define the filter method this way:
+
+<php>
+class ApplicationController extends AkActionController {
+  public function __construct(){
+    $this->beforeFilter('_requireLogin');
+  }
+
+  function _requireLogin() {
+    if(!$this->_isLoggedIn()){
+      $this->flash['error'] = 'You must be logged in to access this section';
+      $this->redirectTo(new_login_url()); // halts request cycle
+    }
+  }
+
+  // The _isLoggedIn() method simply returns true if the user is logged
+  // in and false otherwise. It does this by inspecting the
+  // $this->CurrentUser instance we created previously.
+  public function _isLoggedIn() {
+    return !empty($this->CurrentUser);
+  }
+}
+</php>
+
+The method simply stores an error message in the flash and redirects to the login form if the user is not logged in. If a before filter renders or redirects, the action will not run. If there are additional filters scheduled to run after that filter they are also cancelled.
+
+In this example the filter is added to +ApplicationController+ and thus all controllers in the application inherit it. This will make everything in the application require the user to be logged in in order to use it. For obvious reasons (the user wouldn't be able to log in in the first place!), not all controllers or actions should require this. You can prevent this filter from running before particular actions with +skipBeforeFilter+:
+
+<php>
+class LoginsController extends ApplicationController{
+  public function __construct() {
+    parent::construct();
+    $this->skipBeforeFilter('_requireLogin', array('only' => array('add', 'create')));
+  }
+}
+</php>
+
+Now, the +LoginsController+'s +add+ and +create+ actions will work as before without requiring the user to be logged in. The +'only'+ option is used to only skip this filter for these actions, and there is also an +'except'+ option which works the other way. These options can be used when adding filters too, so you can add a filter which only runs for selected actions in the first place.
+
+h4. After Filters and Around Filters
+
+In addition to before filters, you can run filters after an action has run or both before and after. The after filter is similar to the before filter, but because the action has already been run it has access to the response data that's about to be sent to the client. Obviously, after filters can not stop the action from running.
+
+Around filters are responsible for running the action, but they can choose not to, which is the around filter's way of stopping it.
+
+h4. Other Ways to Use Filters
+
+While the most common way to use filters is by adding methods using *Filter, there is another way to do the same thing.
+
+You can use a class (actually, any object that responds to the right methods will do) to handle the filtering. This is useful in cases that are more complex and can not be implemented in a readable and reusable way using the two other methods. As an example, you could rewrite the login filter again to use a class:
+
+<php>
+class ApplicationController extends AkActionController
+  public function __construct() {
+    $this->beforeFilter(new LoginFilter());
+  }
+}
+
+class LoginFilter
+  public function filter($controller)
+    if(!controller->isLoggedIn()){
+      $controller->flash['error'] = 'You must be logged in';
+      $controller->redirectTo(controller_login_url());
+    }
+  }
+}
+</php>
+
+Again, this is not an ideal example for this filter, because it's not run in the scope of the controller but gets the controller passed as an argument. The filter class has a class method +filter+ which gets run before or after the action, depending on if it's a before or after filter. Classes used as around filters can also use the same +filter+ method, which will get run in the same way. The method can have both a +before+ and an +after+ method that are run before and after the action.
+
+The Rails API documentation has 'more information on using filters':http://api.rails.org/api/files/action_pack/controller_filter.html.
+
+h3. The Request and Response Objects
+
+In every controller there are two attributes pointing to the request and the response objects associated with the request cycle that is currently in execution. The +Request+ attribute contains an instance of +AkRequest+ and the +Response+ method returns a response object representing what is going to be sent back to the client.
+
+h4. The +Request+ Object
+
+The request object contains a lot of useful information about the request coming in from the client. To get a full list of the available methods, refer to the 'API documentation':http://api.rails.org/classes/AkRequest.html. Among the properties that you can access on this object are:
+
+|_. Method of +Request+ |_. Purpose |
+|getHost()|The hostname used for this request.|
+|getDomain($n=2)|The hostname's first +n+ segments, starting from the right (the TLD).|
+|getFormat|The content type requested by the client.|
+|getMethod()|The HTTP method used for the request.|
+|isGet(), isPost(), isPut(), isDelete(), isHead()|Returns true if the HTTP method is GET/POST/PUT/DELETE/HEAD.|
+|getHeaders()|Returns an array containing the headers associated with the request.|
+|getPort()|The port number (integer) used for the request.|
+|getProtocol()|Returns a string containing the protocol used plus '://', for example 'http://'.|
+|getRemoteIp()|The IP address of the client.|
+|getUrl()|The entire URL used for the request.|
+
+
+h4. The +Response+ Object
+
+The response object is not usually used directly, but is built up during the execution of the action and rendering of the data that is being sent back to the user, but sometimes - like in an after filter - it can be useful to access the response directly.
+
+|_. Method of +Request+ |_. Purpose |
+|get/setBody()|This is the string of data being sent back to the client. This is most often HTML.|
+|get/SetStatus()|The HTTP status code for the response, like 200 for a successful request or 404 for file not found.|
+|getLocation()|The URL the client is being redirected to, if any.|
+|getContentType()|The content type of the response.|
+|charset()|The character set being used for the response. Default is 'utf-8'.|
+|getHeaders()|Headers used for the response.|
+
+h5. Setting Custom Headers
+
+If you want to set custom headers for a response then +Response->addHeaders()+ is the place to do it. The headers attribute is an array which maps header names to their values, and Rails will set some of them automatically.
+
+<php>
+$this->Response->addHeaders('Content-Type', 'application/pdf');
+</php>
+
+h3. HTTP Authentications
+
+Rails comes with two built-in HTTP authentication mechanisms:
+
+* Basic Authentication
+* Digest Authentication
+
+h4. HTTP Basic Authentication
+
+HTTP basic authentication is an authentication scheme that is supported by the majority of browsers and other HTTP clients. As an example, consider an administration section which will only be available by entering a username and a password into the browser's HTTP basic dialog window. Using the built-in authentication is quite easy and only requires you to use one method, +authenticateOrRequestWithHttpBasic()+.
+
+<php>
+class AdminController extends ApplicationController {
+  private $_users = array('bermi' => 'secret');
+
+  public function __construct(){
+      $this->beforeFilter('_authenticate');
+  }
+
+  protected function _authenticate() {
+      return $this->authenticateOrRequestWithHttpBasic('App name', $this->_users);
+  }
+}
+</php>
+
+With this in place, you can create namespaced controllers that inherit from +AdminController+. The before filter will thus be run for all actions in those controllers, protecting them with HTTP basic authentication.
+
+h4. HTTP Digest Authentication
+
+HTTP digest authentication is superior to the basic authentication as it does not require the client to send an unencrypted password over the network (though HTTP basic authentication is safe over HTTPS). Using digest authentication with Rails is quite easy and only requires using one method, +authenticateOrRequestWithHttpDigest()+.
+
+<php>
+class AdminController extends ApplicationController {
+  private $_users = array('bermi' => 'secret');
+
+  public function __construct(){
+      $this->beforeFilter('_authenticate');
+  }
+
+  protected function _authenticate() {
+      return $this->authenticateOrRequestWithHttpDigest('App name', $this->_users);
+  }
+}
+</php>
+
+h3. Streaming and File Downloads
+
+Sometimes you may want to send a file to the user instead of rendering an HTML page. All controllers in Rails have the +sendData()+ and the +sendFile()+ methods, which will both stream data to the client. +sendFile()+ is a convenience method that lets you provide the name of a file on the disk and it will stream the contents of that file for you.
+
+To stream data to the client, use +sendData()+:
+
+<php>
+// This example uses dompdf http://www.digitaljunkies.ca/dompdf/
+// for converting an html rendred page into a pdf
+require_once("dompdf_config.inc.php");
+
+class ClientsController extends ApplicationController {
+  // Generates a PDF document with information on the client and
+  // returns it. The user will get the PDF as a file download.
+  public function download_pdf() {
+    $this->Client = $this->Client->find($this->params['id']);
+    $this->sendData($this->_generatePdf(), array(
+              'filename' => $this->Client->name.'.pdf',
+              'type' => 'application/pdf'));
+  }
+
+  private function _generatePdf() {
+    $Pdf = new DOMPDF();
+    $Pdf->set_base_path(AK_PLUBLIC_DIR); // for loading images and CSS
+    $Pdf->load_html($this->renderToString(array('action'=>'show')));
+    $Pdf->render();
+    return $Pdf->output();
+  }
+  
+  public function show() {
+    // ...
+  }
+
+}
+</php>
+
+The +download_pdf()+ action in the example above will call a private method which actually generates the PDF document and returns it as a string. This string will then be streamed to the client as a file download and a filename will be suggested to the user. Sometimes when streaming files to the user, you may not want them to download the file. Take images, for example, which can be embedded into HTML pages. To tell the browser a file is not meant to be downloaded, you can set the +'disposition'+ option to 'inline'. The opposite and default value for this option is 'attachment'.
+
+h4. Sending Files
+
+If you want to send a file that already exists on disk, use the +sendFile()+ method.
+
+<php>
+class ClientsController extends ApplicationController {
+  // Stream a file that has already been generated and stored on disk.
+  public function download_pdf() {
+    $this->Client = $this->Client->find($this->params['id']);
+    $this->sendFile('/files/clients/$Client->id.pdf", array(
+              'filename' => $this->Client->name.'.pdf',
+              'type' => 'application/pdf'));
+  }
+}
+</php>
+
+This will read and stream the file 4kB at the time, avoiding loading the entire file into memory at once. You can turn off streaming with the +'stream'+ option or adjust the block size with the +'buffer_size'+ option.
+
+WARNING: Be careful when using data coming from the client (params, cookies, etc.) to locate the file on disk, as this is a security risk that might allow someone to gain access to files they are not meant to see.
+
+TIP: It is not recommended that you stream static files through Rails if you can instead keep them in a public folder on your web server. It is much more efficient to let the user download the file directly using Apache or another web server, keeping the request from unnecessarily going through the whole Rails stack. Although if you do need the request to go through Rails for some reason, you can set the +'x_sendfile'+ option to true, and Rails will let the web server handle sending the file to the user, freeing up the Rails process to do other things. Note that your web server needs to support the +X-Sendfile+ header for this to work.
+
+h4. RESTful Downloads
+
+While +sendData+ works just fine, if you are creating a RESTful application having separate actions for file downloads is usually not necessary. In REST terminology, the PDF file from the example above can be considered just another representation of the client resource. Rails provides an easy and quite sleek way of doing 'RESTful downloads'. Here's how you can rewrite the example so that the PDF download is a part of the +show+ action, without any streaming:
+
+<php>
+class ClientsController extends ApplicationController {
+  // The user can request to receive this resource as HTML or PDF.
+  public function show() {
+    $this->Client = $this->Client->find($this->params['id']);
+    if ($this->respondTo()) {
+      case 'html': break;
+      case 'pdf': $this->sendData($this->_generatePdf(), array(
+                'filename' => $this->Client->name.'.pdf',
+                'type' => 'application/pdf')); break;
+    }
+  }
+}
+</php>
+
+In order for this example to work, you have to add the PDF MIME type to Rails. This can be done by adding the following line to the file +config/environment.php+:
+
+<php>
+AkMimeType::register('application/pdf', 'pdf');
+</php>
+
+Now the user can request to get a PDF version of a client just by adding '.pdf' to the URL:
+
+<shell>
+GET /clients/1.pdf
+</shell>
+
+h3. Parameter Filtering
+
+Rails keeps a log file for each environment in the +log+ folder. These are extremely useful when debugging what's actually going on in your application, but in a live application you may not want every bit of information to be stored in the log file. The +filter_parameter_logging+ attribute can be used to filter out sensitive information from the log. It works by replacing certain values in the +$this->params+ array with '[FILTERED]' as they are written to the log. As an example, let's see how to filter all parameters with keys that include 'password':
+
+<php>
+class ApplicationController extends AkActionController
+  public $filter_parameter_logging = array('password');
+}
+</php>
+
+The method works recursively through all levels of the +$this->params+ array.
+
+h3. Rescue
+
+Most likely your application is going to contain bugs or otherwise throw an exception that needs to be handled. For example, if the user follows a link to a resource that no longer exists in the database, Active Record will throw the +AkRecordNotFoundException+ exception.
+
+Rails' default exception handling displays a '500 Server Error' message for all exceptions. If the request was made locally, a nice traceback and some added information gets displayed so you can figure out what went wrong and deal with it. If the request was remote Rails will just display a simple '500 Server Error' message to the user, or a '404 Not Found' if there was a routing error or a record could not be found. Sometimes you might want to customize how these errors are caught and how they're displayed to the user. There are several levels of exception handling available in an Rails application:
+
+h4. The Default 500 and 404 Templates
+
+By default a production application will render either a 404 or a 500 error message. These messages are contained in static HTML files in the +public+ folder, in +404.html+ and +500.html+ respectively. You can customize these files to add some extra information and layout, but remember that you can't use Sintags or layouts in them, just plain HTML and PHP.
+
+h4. +rescue_from+
+
+If you want to do something a bit more elaborate when catching errors, you can use +rescue_from+, which handles exceptions of a certain type in an entire controller and its subclasses.
+
+When an exception occurs which is caught by a +rescue_from+ directive, the exception object is passed to the handler. The handler has to be a method defined defined on the +'with'+ option.
+
+Here's how you can use +rescue_from+ to intercept all +AkRecordNotFoundException+ errors and do something with them.
+
+<php>
+class ApplicationController extends AkActionController {
+  public $rescue_from = array(
+      array('AkRecordNotFoundException', 'with' => '_recordNotFound')
+    );
+
+  private function _recordNotFound() {
+    $this->render(array('text' => '404 Not Found', 'status' => 404));
+  }
+}
+</php>
+
+Of course, this example is anything but elaborate and doesn't improve on the default exception handling at all, but once you can catch all those exceptions you're free to do whatever you want with them. For example, you could create custom exception classes that will be thrown when a user doesn't have access to a certain section of your application:
+
+<php>
+class ApplicationController extends AkActionController {
+  public $rescue_from = array(
+      array('UserNotAuthorized', 'with' => '_userNotAuthorized')
+    );
+
+  private function _userNotAuthorized() {
+    $this->flash['error'] = "You don't have access to this section.";
+    $this->redirectTo('back');
+  }
+}
+
+class ClientsController extends ApplicationController {
+  // Check that the user has the right authorization to access clients.
+  public function __construct(){
+    $this->beforeFilter('_checkAuthorization');
+  }
+
+  // Note how the actions don't have to worry about all the auth stuff.
+  public function edit() {
+    $this->client = $this->Client->find($this->params['id'])
+  }
+
+  // If the user is not authorized, just throw the exception.
+  protected function _checkAuthorization() {
+    if(!$this->CurrentUser->isAdmin()) throw new UserNotAuthorized();
+  }
+}
+</php>
+
+
+NOTE: Certain exceptions are only rescuable from the +AkDispatcher+ class, as they are raised before the controller gets initialized.

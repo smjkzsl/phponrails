@@ -1,0 +1,15 @@
+app_layout/config/database.yml
+app_layout/config/sqlite.yml
+app_layout/config/mysql.yml
+app_layout/config/testconfig1.yml
+app_layout/config/plugin_repositories.txt
+app_layout/cache/
+app_layout/docs/rails/doc.sqlite
+test/_fixtures/
+nbproject/
+rails.kpf
+releases/
+reports/
+dist/
+docs/doxygen.log
+*.komodoproject

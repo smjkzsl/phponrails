@@ -1,0 +1,198 @@
+h2. Caching with Rails: An overview
+
+This guide will teach you what you need to know about avoiding that expensive round-trip to your database and returning what you need to return to the web clients in the shortest time possible.
+
+After reading this guide, you should be able to use and configure:
+
+* Page, action, and fragment caching
+* Sweepers
+* Alternative cache stores
+* Conditional GET support
+
+endprologue.
+
+
+h3. Basic Caching
+
+This is an introduction to the three types of caching techniques that Rails provides by default without the use of any third party plugins.
+
+To start playing with testing you'll want to ensure that +ACTION_CONTROLLER_PERFORM_CACHING+ is set to +true+ if you're running in development mode. This flag is normally set in the corresponding +config/environments/*.php+ and caching is disabled by default for development and test, and enabled for production.
+
+<php>
+define('ACTION_CONTROLLER_PERFORM_CACHING', true);
+</php>
+
+h4. Page Caching
+
+Page caching is an Rails mechanism which allows the request for a generated page to be fulfilled by the webserver (i.e. apache or nginx), without ever having to go through the Rails stack at all. Obviously, this is super-fast. Unfortunately, it can't be applied to every situation (such as pages that need authentication) and since the webserver is literally just serving a file from the filesystem, cache expiration is an issue that needs to be dealt with.
+
+So, how do you enable this super-fast cache behavior?  Simple, let's say you have a controller called +ProductsController+ and an +index+ action that lists all the products
+
+<php>
+class ProductsController extends ActionController {
+
+  public $caches_page = 'index';
+
+  public function index() {
+    $this->products = $Product->findAll();
+  }
+
+}
+</php>
+
+The first time anyone requests +/products+, Rails will generate a file called +products.html.php+ and the webserver will then look for that file before it passes the next request for +/products+ to your Rails application.
+
+By default, the page cache directory is set to +PUBLIC_DIR/cache+ (which is usually set to the +public/cache+ folder) and this can be configured by changing the configuration setting +ACTION_CONTROLLER_PAGE_CACHE_DIR+. Changing this path will require web server reconfiguration to let the web server know where to serve the cached files from.
+
+The Page Caching mechanism will automatically add a +.html.php+ extension to requests for pages that do not have an extension to make it easy for the webserver to find those pages.
+
+In order to expire this page when a new product is added we could extend our example controller like this:
+
+<php>
+class ProductsController extends ActionController {
+
+  public $caches_page = 'index';
+
+  public function index() {
+      $this->products = $Product->findAll();
+  }
+
+  public function create() {
+    $this->expirePage(array('action' => 'index');
+    $this->products = $Product->findAll();
+  }
+
+}
+</php>
+
+If you want a more complicated expiration scheme, you can use cache sweepers to expire cached objects when things change. This is covered in the section on Sweepers.
+
+NOTE: Page caching ignores all parameters. For example +/products?page=1+ will be written out to the filesystem as +products.html.php+ with no reference to the +page+ parameter. Thus, if someone requests +/products?page=2+ later, they will get the cached first page. Be careful when page caching GET parameters in the URL!
+
+INFO: Page caching runs in an after filter. Thus, invalid requests won't generate spurious cache entries as long as you halt them. Typically, a redirection in some before filter that checks request preconditions does the job.
+
+
+
+h4. Action Caching
+
+One of the issues with Page Caching is that you cannot use it for pages that require to restrict access somehow. This is where Action Caching comes in. Action Caching works like Page Caching except for the fact that the incoming web request does go from the webserver to the Rails stack and Action Pack so that before filters can be run on it before the cache is served. This allows authentication and other restriction to be run while still serving the result of the output from a cached copy.
+
+Clearing the cache works in the exact same way as with Page Caching.
+
+Let's say you only wanted authenticated users to call actions on +ProductsController+.
+
+<php>
+class ProductsController extends ActionController {
+
+  public $caches_action = 'index';
+
+  public function __construct(){
+    $this->beforeFilter('_authenticate');
+  }
+
+  public function index() {
+      $this->products = $Product->findAll();
+  }
+
+  public function create() {
+      $this->expireAction(array('action' => 'index');
+  }
+
+}
+</php>
+
+
+INFO: Action caching runs in an after filter. Thus, invalid requests won't generate spurious cache entries as long as you halt them. Typically, a redirection in some before filter that checks request preconditions does the job.
+
+
+
+h4. Fragment Caching
+
+Life would be perfect if we could get away with caching the entire contents of a page or action and serving it out to the world. Unfortunately, dynamic web applications usually build pages with a variety of components not all of which have the same caching characteristics. In order to address such a dynamically created page where different parts of the page need to be cached and expired differently Rails provides a mechanism called Fragment Caching.
+
+Fragment Caching allows a fragment of view logic to be wrapped in a cache block and served out of the cache store when the next request comes in.
+
+As an example, if you wanted to show all the orders placed on your website in real time and didn't want to cache that part of the page, but did want to cache the part of the page which lists all products available, you could use this piece of code:
+
+<php>
+<?php foreach($Orders->findRecent() as $Order): ?>
+  {Order.buyer.name} bought {Order.product.name}
+<?php endforeach; ?>
+
+<?php if (!$cache_helper->begin('all_available_products')) { ?>
+  All available products:
+  <?php $Products = $Product->findAll(); ?>
+  {loop Products}
+    <%= link_to Product.name, product_url(Product) %>
+  {end}
+<?= $cache_helper->end('all_available_products');} ?>
+</php>
+
+This fragment is then available to all actions in the +ProductsController+ using the key and can be expired the same way:
+
+<php>
+$thid->expireFragment('all_available_products')
+</php>
+
+
+
+h4. Sweepers
+
+Cache sweeping is a mechanism which allows you to get around having a ton of +expire{Page,Action,Fragment}+ calls in your code.  It does this by moving all the work required to expire cached content into an +AkCacheSweeper+ class.  This class is an Observer and looks for changes to an object via callbacks, and when a change occurs it expires the caches associated with that object in an around or after filter.
+
+Continuing with our Product controller example, we could rewrite it with a sweeper like this:
+
+<php>
+class ProductSweeper extends AkCacheSweeper {
+  // This sweeper is going to keep an eye on the Product model
+  public $observe = array("Product");
+
+  // If our sweeper detects that a Product was created call this
+  public function afterCreate(&$Product) {
+      $this->expireCacheFor($Product);
+  }
+
+  // If our sweeper detects that a Product was updated call this
+  public function afterUpdate(&$Product) {
+      $this->expireCacheFor($Product);
+  }
+
+  // If our sweeper detects that a Product was deleted call this
+  public function afterDestroy(&$Product) {
+      $this->expireCacheFor($Product);
+  }
+
+  private function expireCacheFor(&$Product) {
+    // Expire the index page now that we added a new product
+    $this->expirePage(array('controller'=>'products','action'=>'index'));
+
+    // Expire a fragment
+    $this->expireFragment('all_available_products');
+  }
+}
+</php>
+
+You may notice that the actual product gets passed to the sweeper, so if we were caching the edit action for each product, we could add an expire method which specifies the page we want to expire:
+
+<php>
+  $this->expireAction(array('controller'=>'products', 'action'=>'edit', 'id'=>$Product->Id));
+</php>
+
+Then we add it to our controller to tell it to call the sweeper when certain actions are called. So, if we wanted to expire the cached content for the list and edit actions when the create action was called, we could do the following:
+
+<php>
+class ProductsController extends ActionController{}
+
+  public $caches_action = 'index';
+  public $cache_sweeper = 'product_sweeper';
+
+  public function __construct(){
+    $this->beforeFilter('_authenticate');
+  }
+
+  public function index() {
+    $this->products = $Product->findAll();
+  }
+}
+</php>
+

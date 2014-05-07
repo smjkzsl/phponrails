@@ -1,0 +1,9 @@
+#!/usr/bin/env php
+
+WARNING ./script/test is no longer supported
+
+Use:
+
+    ./makelos test 
+
+<?php exit(0); ?>

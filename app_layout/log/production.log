@@ -1,0 +1,16 @@
+Sun, 27 Apr 2014 12:50:29 +0800	[[0;31mfatal[0m]	
+NoMatchingRouteException: (No action was specified.
+#0 D:\SaeServer\www\vendor\rails\action_pack\request.php(762): AkRequest->checkForRoutedRequests(Object(AkRouter))
+#1 D:\SaeServer\www\vendor\rails\action_pack\request.php(657): AkRequest->mapRoutes(NULL)
+#2 D:\SaeServer\www\vendor\rails\action_pack\dispatcher.php(24): AkRequest->recognize()
+#3 D:\SaeServer\www\index.php(5): AkDispatcher->dispatch()
+#4 {main})
+  
+Sun, 27 Apr 2014 12:50:52 +0800	[[0;31mfatal[0m]	
+NoMatchingRouteException: (No action was specified.
+#0 D:\SaeServer\www\vendor\rails\action_pack\request.php(762): AkRequest->checkForRoutedRequests(Object(AkRouter))
+#1 D:\SaeServer\www\vendor\rails\action_pack\request.php(657): AkRequest->mapRoutes(NULL)
+#2 D:\SaeServer\www\vendor\rails\action_pack\dispatcher.php(24): AkRequest->recognize()
+#3 D:\SaeServer\www\index.php(5): AkDispatcher->dispatch()
+#4 {main})
+  
